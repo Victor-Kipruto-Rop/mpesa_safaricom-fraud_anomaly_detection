@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  postgres-fraud:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: ${DB_USER:-fraud_admin}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-fraud_password}
+      POSTGRES_DB: ${DB_NAME:-fraud_warehouse}
+    ports:
+      - "5442:5432"
+
+  fraud-dashboard:
+    image: python:3.11-slim
+    command: bash -c "pip install streamlit plotly pandas sqlalchemy psycopg2-binary scikit-learn && streamlit run dashboards/fraud_dashboard.py --server.port 8511 --server.address 0.0.0.0"
+    ports:
+      - "8511:8511"
+    environment:
+      - STREAMLIT_SERVER_HEADLESS=true
+      - DB_HOST=postgres-fraud
+    volumes:
+      - .:/app
+    working_dir: /app
+    depends_on:
+      - postgres-fraud
