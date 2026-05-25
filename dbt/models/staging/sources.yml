@@ -1,0 +1,7 @@
+version: 2
+sources:
+  - name: fraud_raw
+    database: mpesa_warehouse
+    schema: public
+    tables:
+      - name: raw_fraud_transactions

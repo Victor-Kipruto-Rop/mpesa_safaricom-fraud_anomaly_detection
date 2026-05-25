@@ -1,0 +1,12 @@
+fraud_profile:
+  outputs:
+    dev:
+      type: postgres
+      host: "{{ env_var('DB_HOST', 'localhost') }}"
+      user: mpesa_admin
+      password: mpesa_password
+      port: 5432
+      dbname: mpesa_warehouse
+      schema: public
+      threads: 4
+  target: dev
