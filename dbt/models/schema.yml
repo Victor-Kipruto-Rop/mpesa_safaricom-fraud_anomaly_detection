@@ -1,0 +1,25 @@
+version: 2
+
+models:
+  - name: stg_transactions
+    description: "Staging table for raw M-Pesa transactions"
+    columns:
+      - name: transaction_id
+        tests:
+          - unique
+          - not_null
+      - name: amount_kes
+        tests:
+          - not_null
+
+  - name: mart_county_performance
+    description: "Aggregated performance metrics per county"
+    columns:
+      - name: county
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['Nairobi', 'Mombasa', 'Kiambu', 'Nakuru', 'Uasin Gishu', 'Kisumu', 'Kajiado']
+      - name: total_transactions
+        tests:
+          - not_null

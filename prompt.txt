@@ -1,0 +1,153 @@
+# AI Coding Prompt: Close Coverage Gaps to 100% on Critical Paths
+
+Standalone prompt. Use once `pytest-cov` is installed and you have a real `htmlcov` report to work from — this prompt is about closing gaps against real, measured coverage, not adding tests blindly.
+
+---
+
+## ROLE
+
+You are a senior test engineer auditing an existing fraud detection test suite (17 tests currently passing) against its original specification. Your job is not to add tests for the sake of a coverage number — it's to find the specific, real gaps between what's tested and what a production fraud system actually needs verified, then close exactly those gaps.
+
+## OBJECTIVE
+
+1. Measure real coverage (not just "tests pass").
+2. Diff what's actually tested against the original acceptance criteria for this module.
+3. Close every genuine gap, prioritizing correctness-critical and fallback/degradation paths to 100%, not the whole codebase uniformly.
+4. Prove it with real coverage output, not a claim.
+
+---
+
+## STEP 1: MEASURE REAL COVERAGE FIRST
+
+Before writing a single new test, run:
+
+```bash
+pip install pytest-cov --break-system-packages  # or into the project's venv, matching existing setup
+PYTHONPATH=. pytest tests/ \
+  --cov=mpesa_safaricom/fraud_anomaly_detection \
+  --cov-report=term-missing \
+  --cov-report=html \
+  -v
+```
+
+Report the actual output: overall coverage percentage, and the specific uncovered line numbers per file from `term-missing`. Do not proceed to Step 2 with assumptions about what's covered — work from this real output.
+
+Add coverage enforcement so this can't silently regress later:
+
+```toml
+# pyproject.toml
+[tool.pytest.ini_options]
+addopts = "--cov=mpesa_safaricom/fraud_anomaly_detection --cov-report=term-missing --cov-fail-under=85"
+```
+
+## STEP 2: AUDIT AGAINST THE ORIGINAL SPEC — NAME-MATCH IS NOT ENOUGH
+
+Existing tests (for reference — confirm this list against the real repo, it may have grown):
+```
+tests/integration/test_integration_engine.py::test_engine_handles_both_domains
+tests/test_additional_checks.py::test_velocity_detector_triggers
+tests/test_additional_checks.py::test_sim_swap_correlator_behaviour
+tests/test_additional_checks.py::test_night_flagger
+tests/test_additional_checks.py::test_batch_reconcile_counts_divergence
+tests/test_aggregator.py::test_aggregator_combines
+tests/test_checks.py::test_velocity_detector_basic
+tests/test_checks.py::test_sim_swap_correlator_basic
+tests/test_checks.py::test_night_flagger_timezone
+tests/test_checks.py::test_ml_scorer_missing_model
+tests/test_engine.py::test_engine_scores_transaction
+tests/test_engine.py::test_engine_creates_audit_log
+tests/test_fraud_components.py::test_champion_challenger_shadow
+tests/test_fraud_components.py::test_aggregator_interaction
+tests/test_fraud_components.py::test_mule_correlator_flags_and_not_flags
+tests/test_fraud_components.py::test_circuit_breaker_trip_and_recover
+tests/unit/test_config_manager.py::test_config_hot_reload
+```
+
+For each test below, open the actual test file and check the assertions inside it — a test whose *name* sounds like it covers something may only assert the happy path. Report, per item, one of: **CONFIRMED COVERED** (with the specific assertion that proves it), **PARTIALLY COVERED** (what's missing), or **NOT COVERED** (doesn't exist).
+
+### VelocityDetector
+- [ ] Exactly-at-threshold does NOT trigger; one-over DOES trigger (boundary test, not just "triggers when clearly over")
+- [ ] Events outside the sliding window are correctly excluded/expired
+- [ ] Duplicate `txn_id` replayed does not double-count
+- [ ] Redis failure → returns "unknown" state, does not raise
+- [ ] **Concurrent writes to the same MSISDN from multiple threads produce a correct count** — this is the one most likely to not exist yet; if it doesn't, write it using `threading` or `pytest-xdist`-style concurrent execution against a real (or realistically-faked) Redis client, not a simple mock that can't expose race conditions
+
+### SimSwapCorrelator
+- [ ] Swap within lookback + amount over threshold → triggers
+- [ ] Swap within lookback + amount under threshold → does NOT trigger
+- [ ] Swap outside lookback window → does NOT trigger regardless of amount
+- [ ] **"No swap on record" and "swap feed stale" produce distinguishable results** — check the actual assertion compares specific result fields (e.g., `result.state != "stale"` vs `result.triggered == False`), not just that both don't trigger
+
+### NightTransactionFlagger
+- [ ] Local-time-02:00 flags; same UTC instant that is NOT locally 02:00 does not flag — confirm the test actually varies timezone, not just checks a fixed offset
+- [ ] Unknown customer timezone falls back to default and logs the fallback
+
+### MLFraudScorer
+- [ ] Model unavailable → neutral result, no exception (covered by `test_ml_scorer_missing_model` — confirm it asserts the *result*, not just that no exception was raised)
+- [ ] Corrupt/incompatible model file → same graceful fallback (likely NOT covered — missing model and corrupt model are different failure modes)
+- [ ] Valid model produces score in [0,1] plus `model_version` in output
+
+### FraudScoreAggregator
+- [ ] All checks clean → `ALLOW`
+- [ ] One high-weight check → `REVIEW`/`BLOCK` per thresholds
+- [ ] **Explanation content actually names which checks triggered and why** — confirm `test_aggregator_combines` asserts on the explanation string/list content, not just the final decision value
+- [ ] **Interaction effect test**: combined score from two correlated checks (velocity + SIM swap) exceeds either individually — confirm `test_aggregator_interaction` asserts the numeric relationship (`combined_score > max(individual_scores)`), not just that both checks appear in the result
+- [ ] A check in "unknown" state is handled distinctly from "checked and clean"
+
+### FraudConfig
+- [ ] Invalid config raises at load time (missing — no test in the current list covers this)
+- [ ] Per-tenant override takes precedence over default
+- [ ] Hot-reload picks up a changed threshold without restart (covered by `test_config_hot_reload` — confirm it actually re-invokes reload and checks the new value takes effect, not just that reload doesn't error)
+
+### Engine / integration
+- [ ] Existing (other-domain) scorers unaffected by mobile money integration — confirm `test_engine_handles_both_domains` actually runs both domains through the *same engine instance* and asserts no state bleed, not just that both work independently
+- [ ] Schema validation rejects malformed input to DLQ (check if this exists at all — not in the current list)
+- [ ] Idempotency: re-scoring the same `txn_id` doesn't double-count or duplicate audit records (check if this exists — not obviously in the current list)
+
+### MuleAccountCorrelator
+- [ ] Flags a genuine mule pattern (multiple unconnected senders, short window) — covered by `test_mule_correlator_flags_and_not_flags`, confirm it checks the "unconnected" graph logic specifically, not just sender count
+- [ ] Does NOT flag a legitimate shared-recipient scenario (family, chama) — confirm this is the "not flags" half of that same test and it's a realistic legitimate scenario, not a trivial negative case
+
+### Circuit breaker
+- [ ] Trips open after repeated failures (covered by `test_circuit_breaker_trip_and_recover`)
+- [ ] Recovers via half-open trial after cooldown (confirm this is the "recover" half, not just the trip half)
+
+### Champion/challenger
+- [ ] Challenger scores logged but never affects live decision (covered by `test_champion_challenger_shadow` — confirm it asserts the live decision used only the champion's score even when challenger disagrees)
+
+## STEP 3: WRITE ONLY THE MISSING/PARTIAL TESTS
+
+For every item marked NOT COVERED or PARTIALLY COVERED in Step 2, write the specific test needed — add to the existing file it belongs in (don't create new files for one or two tests; only create a new file if a whole new category, like schema validation, has zero coverage yet).
+
+Do not rewrite or touch tests already marked CONFIRMED COVERED — this step is surgical, not a rewrite.
+
+## STEP 4: RE-RUN AND REPORT REAL NUMBERS
+
+```bash
+PYTHONPATH=. pytest tests/ --cov=mpesa_safaricom/fraud_anomaly_detection --cov-report=term-missing -v
+```
+
+Report:
+- New total test count and pass/fail
+- New overall coverage percentage
+- Coverage specifically on `checks/` (should be at or near 100%, especially fallback branches)
+- Any remaining uncovered lines, with an explicit reason for each (e.g., "line 84 is an unreachable defensive check" is acceptable; "not yet tested" is not)
+
+## ACCEPTANCE CRITERIA
+
+- [ ] Real coverage measured and reported (not assumed) before any new test is written
+- [ ] Every item in Step 2's checklist explicitly marked CONFIRMED / PARTIAL / NOT COVERED with the specific assertion (or absence) cited
+- [ ] Every PARTIAL/NOT COVERED item has a corresponding new or extended test
+- [ ] Overall coverage ≥85%, with `checks/` fallback/degradation branches at 100%
+- [ ] `--cov-fail-under` added to CI config so this can't silently regress
+- [ ] Final coverage report output shown, not claimed
+
+## CONSTRAINTS
+
+- Do not pad the suite with trivial tests just to move a percentage number — a test that doesn't assert anything meaningful about behavior is worse than no test, since it creates false confidence.
+- Do not touch or "improve" a test already confirmed to cover its target correctly — scope is strictly the gaps identified in Step 2.
+- If a line is genuinely unreachable or defensive-only, say so explicitly rather than contorting a test to hit it artificially.
+
+---
+
+**Run Step 1 now and show the real coverage output before doing anything else — the rest of this prompt depends on working from real numbers, not assumptions about what's already tested.**

@@ -1,25 +1,193 @@
-version: '3.8'
+version: '3.9'
 
 services:
-  postgres-fraud:
-    image: postgres:15
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: fraud_detection_postgres
     environment:
-      POSTGRES_USER: ${DB_USER:-fraud_admin}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-fraud_password}
-      POSTGRES_DB: ${DB_NAME:-fraud_warehouse}
+      POSTGRES_DB: ${POSTGRES_DB:-fraud_detection}
+      POSTGRES_USER: ${POSTGRES_USER:-fraud_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-secure_password}
     ports:
-      - "5442:5432"
-
-  fraud-dashboard:
-    image: python:3.11-slim
-    command: bash -c "pip install streamlit plotly pandas sqlalchemy psycopg2-binary scikit-learn && streamlit run dashboards/fraud_dashboard.py --server.port 8511 --server.address 0.0.0.0"
-    ports:
-      - "8511:8511"
-    environment:
-      - STREAMLIT_SERVER_HEADLESS=true
-      - DB_HOST=postgres-fraud
+      - "5432:5432"
     volumes:
-      - .:/app
-    working_dir: /app
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sh:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-fraud_admin}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - fraud_detection_network
+
+  # Prometheus for metrics
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: fraud_detection_prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
     depends_on:
-      - postgres-fraud
+      - postgres
+    networks:
+      - fraud_detection_network
+
+  # Grafana for visualization
+  grafana:
+    image: grafana/grafana:latest
+    container_name: fraud_detection_grafana
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    networks:
+      - fraud_detection_network
+
+  # Redis for caching
+  redis:
+    image: redis:7-alpine
+    container_name: fraud_detection_redis
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - fraud_detection_network
+
+  # Fraud Detection API
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: fraud_detection_api
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-fraud_detection}
+      POSTGRES_USER: ${POSTGRES_USER:-fraud_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-secure_password}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      FLASK_ENV: ${FLASK_ENV:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      PROMETHEUS_PORT: 8000
+    ports:
+      - "5000:5000"
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./:/app
+      - ./models:/app/models
+    command: python -m flask run --host=0.0.0.0
+    networks:
+      - fraud_detection_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Streamlit Dashboard
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: fraud_detection_dashboard
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-fraud_detection}
+      POSTGRES_USER: ${POSTGRES_USER:-fraud_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-secure_password}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    ports:
+      - "8501:8501"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./:/app
+      - ./dashboards:/app/dashboards
+      - ./models:/app/models
+    command: streamlit run dashboard_app.py --server.port=8501 --server.address=0.0.0.0
+    networks:
+      - fraud_detection_network
+
+  # ML Model Training Service
+  trainer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: fraud_detection_trainer
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-fraud_detection}
+      POSTGRES_USER: ${POSTGRES_USER:-fraud_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-secure_password}
+    volumes:
+      - ./:/app
+      - ./ml:/app/ml
+      - ./models:/app/models
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: sleep infinity  # Keep running for manual training
+    networks:
+      - fraud_detection_network
+
+  # Test runner
+  tests:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: fraud_detection_tests
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-fraud_detection_test}
+      POSTGRES_USER: ${POSTGRES_USER:-fraud_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-secure_password}
+    volumes:
+      - ./:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: pytest --cov=fraud_anomaly_detection --cov-report=html tests/
+    networks:
+      - fraud_detection_network
+
+volumes:
+  postgres_data:
+  prometheus_data:
+  grafana_data:
+  redis_data:
+
+networks:
+  fraud_detection_network:
+    driver: bridge

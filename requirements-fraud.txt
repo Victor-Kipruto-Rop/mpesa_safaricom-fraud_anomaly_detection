@@ -1,0 +1,10 @@
+redis>=5.0
+scikit-learn>=1.4
+onnxruntime>=1.17
+pandas>=2.2
+pydantic>=2.6
+structlog>=24.1
+prometheus-client>=0.20
+pytz
+joblib
+skl2onnx

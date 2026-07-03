@@ -1,14 +1,16 @@
-name: 'fraud_detection'
+name: 'mpesa_safaricom'
 version: '1.0.0'
 config-version: 2
-profile: 'fraud_profile'
+profile: 'mpesa_profile'
 
 model-paths: ["models"]
+analysis-paths: ["analyses"]
 test-paths: ["tests"]
 seed-paths: ["seeds"]
+macro-paths: ["macros"]
 
 models:
-  fraud_detection:
+  mpesa_safaricom:
     staging:
       +materialized: view
     intermediate:

@@ -2,12 +2,9 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import os
-import sys
 from datetime import datetime
 
-# Add root to sys.path
-sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
-from fraud_engine.detector import MpesaFraudDetector
+from .fraud_engine.detector import MpesaFraudDetector
 
 st.set_page_config(page_title="M-Pesa Fraud Monitoring", layout="wide", page_icon="🕵️")
 
@@ -20,7 +17,7 @@ model_path = "MPESA_Safaricom(pipeline)/Fraud_Anomaly_Detection/ml/models/fraud_
 # Load Data
 if not os.path.exists(data_path):
     st.info("Generating training data...")
-    from ingestion.generate_fraud_data import generate_mpesa_fraud_data
+    from .ingestion.generate_fraud_data import generate_mpesa_fraud_data
     generate_mpesa_fraud_data()
 
 df = pd.read_csv(data_path)

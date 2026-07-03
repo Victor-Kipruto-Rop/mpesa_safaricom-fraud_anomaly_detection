@@ -1,4 +1,4 @@
-fraud_profile:
+mpesa_profile:
   outputs:
     dev:
       type: postgres
