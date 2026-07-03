@@ -2,6 +2,14 @@
 
 A production-grade real-time fraud detection engine for M-Pesa mobile money transactions, combining rule-based and machine learning approaches with multi-domain orchestration, circuit breaker resilience, and comprehensive audit logging.
 
+This folder is the standalone fraud detection component for the broader M-Pesa streaming platform. It contains the scoring engine, rule checks, ML artifacts, dashboards, deployment assets, and operational documentation used for local testing, staging validation, and deployment workflows.
+
+## Repository Notes
+
+- This folder is intended to be used as an independent repository for fraud anomaly detection work.
+- Main entry points include the API service, scoring engine, dashboard app, and Docker Compose setup.
+- Typical validation steps include running unit and integration tests, exercising the API locally, and confirming staging pipeline health.
+
 ## Quick Start
 
 ### Prerequisites
