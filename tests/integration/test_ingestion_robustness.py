@@ -16,11 +16,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-# Assuming imports work when run with PYTHONPATH set correctly
-try:
-    from ingestion.schema_validator import SchemaValidator
-except ImportError:
-    pass
+from ...schema_validator import SchemaValidator
 
 
 class TestSchemaValidation:
